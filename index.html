@@ -210,19 +210,24 @@ async function diagnose() {
       '或页面被嵌在未授予 bluetooth 权限的 iframe 中。' };
   }
 
-  // API 存在不代表能用：还要看这台机器有没有可用的蓝牙适配器。
+  // 适配器检测只作提示，不作拦截：getAvailability 在部分 Windows / Linux 上会误报
+  // false，而此时 requestDevice 其实可用。让用户自己点，比替他判死刑稳妥。
+  let warn = null;
   try {
     if (navigator.bluetooth.getAvailability) {
       const available = await navigator.bluetooth.getAvailability();
       if (!available) {
-        return { ok: false, reason:
-          '浏览器支持 Web Bluetooth，但系统未检测到可用的蓝牙适配器。' +
-          '请确认设备有蓝牙硬件、驱动正常且蓝牙开关已打开。' };
+        warn = '系统报告未检测到可用的蓝牙适配器。若确认蓝牙已开启，可以照常点击扫描——' +
+               '该检测在部分系统上会误报。';
       }
     }
-  } catch { /* getAvailability 不可用时不阻断，交给 requestDevice 报错 */ }
+  } catch { /* 不可用时忽略，交给 requestDevice 报真错 */ }
 
-  return { ok: true, reason: `环境正常（${isChromium ? 'Chromium 内核' : '未知内核'}，已在 secure context）` };
+  return {
+    ok: true,
+    warn,
+    reason: `环境正常（${isChromium ? 'Chromium 内核' : '未知内核'}，已在 secure context）`,
+  };
 }
 
 async function scan() {
@@ -377,6 +382,7 @@ diagnose().then(d => {
   if (d.ok) {
     log('就绪，点击「扫描并选择设备」开始。');
     log(d.reason);
+    if (d.warn) log('⚠ ' + d.warn, 'l-err');
   } else {
     log('环境自检未通过：', 'l-err');
     log(d.reason, 'l-err');
