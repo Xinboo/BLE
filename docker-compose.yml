@@ -1,0 +1,22 @@
+services:
+  ble:
+    image: ghcr.io/xinboo/ble:latest
+    container_name: ble
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8080
+      SERVER_ROOT: /public
+      SERVER_COMPRESSION: "true"
+      SERVER_LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - Shard
+
+networks:
+  Shard:
+    external: true
