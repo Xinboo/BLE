@@ -11,11 +11,22 @@
 
 ## 浏览器要求
 
-需要 Chrome / Edge 内核浏览器。Firefox 与 Safari 不支持 Web Bluetooth。
+| 平台 | 可用 | 不可用 |
+| --- | --- | --- |
+| Windows / macOS / Linux | Chrome、Edge | Firefox、Safari |
+| Android | Chrome、Edge | Firefox |
+| **iOS / iPadOS** | **仅 Bluefy、WebBLE** | Safari、Chrome、Edge、Firefox |
+
+iOS 上的第三方浏览器被苹果强制使用系统 WebKit 引擎，而 WebKit 至今未实现 Web Bluetooth
+（[WebKit bug 101034](https://webkit.org/b/101034)，自 2012 年搁置）。因此 **iOS 版 Chrome 无法
+访问蓝牙，这与网页实现无关**——任何网页在其中都做不到。Bluefy 等 App 自带了一套 Web Bluetooth
+实现，本页在其中可正常扫描与收发。
 
 > **Web Bluetooth 只在 secure context 下可用**：即 HTTPS、`localhost`，或直接以 `file://` 打开。
 > 通过 `http://<局域网IP>` 访问时 `navigator.bluetooth` 不存在，页面无法扫描设备。
 > 详见下方「局域网访问」。
+
+页面在加载时会自检运行环境，若不可用会直接说明原因与对策，无需自行排查。
 
 ## 运行
 
