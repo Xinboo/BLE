@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BLE 串口透传调试台</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --border: #dfe3e8;
+    --text: #1f2328;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --ok: #16a34a;
+    --err: #dc2626;
+    --rx: #0f766e;
+    --tx: #7c3aed;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d; --panel: #1e2128; --border: #31353d;
+      --text: #e6e8eb; --muted: #9aa1ab; --accent: #60a5fa;
+      --ok: #4ade80; --err: #f87171; --rx: #2dd4bf; --tx: #c084fc;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px;
+    font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  .wrap { max-width: 900px; margin: 0 auto; display: grid; gap: 12px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 12px; margin: 0; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button {
+    font: inherit; padding: 7px 14px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--panel);
+    color: var(--text); cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  input, select {
+    font: inherit; padding: 7px 9px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  }
+  input[type=text] { flex: 1; min-width: 180px; }
+  label.chk { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 13px; }
+
+  #status { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.on { background: var(--ok); }
+  .dot.err { background: var(--err); }
+
+  #info { font-size: 12px; color: var(--muted); margin-top: 8px; word-break: break-all; }
+  #info div { margin-top: 2px; }
+  code { font-family: ui-monospace, Consolas, monospace; }
+
+  #log {
+    height: 340px; overflow-y: auto; margin: 0;
+    font: 12px/1.6 ui-monospace, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  #log div { padding: 1px 0; }
+  .t { color: var(--muted); }
+  .l-rx { color: var(--rx); }
+  .l-tx { color: var(--tx); }
+  .l-err { color: var(--err); }
+  .l-sys { color: var(--muted); }
+  .stats { font-size: 12px; color: var(--muted); margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="panel">
+    <h1>BLE 串口透传调试台</h1>
+    <p class="sub">需 Chrome / Edge 内核浏览器，页面须运行在 HTTPS、localhost 或本地文件下。</p>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <button id="btnScan" class="primary">扫描并选择设备</button>
+      <button id="btnDisc" disabled>断开</button>
+      <div id="status"><span class="dot" id="dot"></span><span id="statusText">未连接</span></div>
+    </div>
+    <div id="info"></div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <input type="text" id="txInput" placeholder="输入要发送的内容，回车发送" disabled>
+      <select id="txMode">
+        <option value="text">文本</option>
+        <option value="hex">HEX</option>
+      </select>
+      <button id="btnSend" disabled>发送</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label class="chk"><input type="checkbox" id="txCRLF"> 追加 \r\n</label>
+      <label class="chk"><input type="checkbox" id="rxHex"> 接收显示为 HEX</label>
+      <label class="chk"><input type="checkbox" id="autoScroll" checked> 自动滚动</label>
+      <button id="btnClear">清空</button>
+      <span class="stats" id="stats">TX 0 B / RX 0 B</span>
+    </div>
+  </div>
+
+  <div class="panel"><div id="log"></div></div>
+
+</div>
+
+<script>
+// 常见 BLE 串口透传模块的服务 / 特征 UUID。
+// Web Bluetooth 只允许访问事先声明过的 service，所以必须预置白名单，
+// 连接后再从中自动识别出可写 + 可通知的特征对。
+const KNOWN_SERVICES = [
+  '6e400001-b5a3-f393-e0a9-e50e24dcca9e', // Nordic UART (NUS)，及大量兼容模块
+  0xffe0,                                  // HM-10 / HC-08 / CC254x
+  0xfff0,                                  // JDY-xx / BT-05 等
+  0xffe5,                                  // 部分 CC2541 写通道独立的模块
+  0xaf30,                                  // BlueGiga
+  0x18f0,                                  // 部分打印/称重模块
+  '49535343-fe7d-4ae5-8fa9-9fafd205e455', // Microchip RN4870 / BM70
+  '0000fee0-0000-1000-8000-00805f9b34fb',
+  '0000fee7-0000-1000-8000-00805f9b34fb',
+];
+
+let device = null, server = null, rxChar = null, txChar = null;
+let txBytes = 0, rxBytes = 0;
+let writeWithoutResponse = false;
+
+const $ = id => document.getElementById(id);
+const logEl = $('log');
+
+function log(text, cls = 'l-sys') {
+  const t = new Date().toTimeString().slice(0, 8);
+  const d = document.createElement('div');
+  d.className = cls;
+  d.innerHTML = `<span class="t">[${t}]</span> `;
+  d.appendChild(document.createTextNode(text));
+  logEl.appendChild(d);
+  if ($('autoScroll').checked) logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setStatus(text, state) {
+  $('statusText').textContent = text;
+  $('dot').className = 'dot' + (state ? ' ' + state : '');
+}
+
+function setConnected(on) {
+  $('btnDisc').disabled = !on;
+  $('btnSend').disabled = !on;
+  $('txInput').disabled = !on;
+  $('btnScan').disabled = on;
+}
+
+function updateStats() {
+  $('stats').textContent = `TX ${txBytes} B / RX ${rxBytes} B`;
+}
+
+const toHex = buf => [...new Uint8Array(buf)]
+  .map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+
+function hexToBytes(str) {
+  const clean = str.replace(/0x/gi, '').replace(/[\s,]+/g, '');
+  if (clean.length === 0) throw new Error('HEX 内容为空');
+  if (clean.length % 2) throw new Error('HEX 长度必须为偶数');
+  if (/[^0-9a-f]/i.test(clean)) throw new Error('HEX 含非法字符');
+  return new Uint8Array(clean.match(/../g).map(h => parseInt(h, 16)));
+}
+
+// 短 UUID 显示得友好一点
+const fmtUuid = u => {
+  const m = /^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/i.exec(u);
+  return m ? '0x' + m[1].toUpperCase() : u;
+};
+
+async function scan() {
+  try {
+    if (!navigator.bluetooth) {
+      log('当前浏览器不支持 Web Bluetooth，请用 Chrome / Edge。', 'l-err');
+      return;
+    }
+    log('正在打开设备选择器…');
+    // acceptAllDevices 让所有设备都能出现在列表里（模块广播里未必带 service UUID），
+    // optionalServices 则决定连上后我们有权限访问哪些 service。
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: KNOWN_SERVICES,
+    });
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    log(`已选择：${device.name || '(无名称)'} [${device.id}]`);
+    await connect();
+  } catch (e) {
+    if (e.name === 'NotFoundError') log('已取消选择。');
+    else { log('扫描失败：' + e.message, 'l-err'); setStatus('错误', 'err'); }
+  }
+}
+
+async function connect() {
+  try {
+    setStatus('连接中…');
+    server = await device.gatt.connect();
+    log('GATT 已连接，正在识别串口服务…');
+
+    const found = await discoverSerialPair();
+    if (!found) {
+      log('未找到可用的串口透传服务。该模块的 UUID 可能不在预置白名单中，' +
+          '需要把它的 service UUID 加进 KNOWN_SERVICES。', 'l-err');
+      setStatus('无可用服务', 'err');
+      await device.gatt.disconnect();
+      return;
+    }
+
+    await rxChar.startNotifications();
+    rxChar.addEventListener('characteristicvaluechanged', onReceive);
+
+    setStatus('已连接：' + (device.name || device.id), 'on');
+    setConnected(true);
+    log('串口通道就绪，可以收发数据了。', 'l-sys');
+  } catch (e) {
+    log('连接失败：' + e.message, 'l-err');
+    setStatus('连接失败', 'err');
+    setConnected(false);
+  }
+}
+
+// 遍历白名单里实际存在的 service，找出「可通知」+「可写」的特征对。
+async function discoverSerialPair() {
+  rxChar = txChar = null;
+  let services = [];
+  try {
+    services = await server.getPrimaryServices();
+  } catch (e) {
+    log('读取服务列表失败：' + e.message, 'l-err');
+    return false;
+  }
+
+  for (const svc of services) {
+    let chars;
+    try { chars = await svc.getCharacteristics(); } catch { continue; }
+
+    const notify = chars.find(c => c.properties.notify || c.properties.indicate);
+    const write = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+    if (!notify || !write) continue;
+
+    rxChar = notify;
+    txChar = write;
+    // 透传模块普遍偏好无应答写，吞吐更高；不支持时回落到有应答写。
+    writeWithoutResponse = write.properties.writeWithoutResponse;
+
+    const lines = [
+      `<div>设备：<code>${device.name || '(无名称)'}</code></div>`,
+      `<div>服务：<code>${fmtUuid(svc.uuid)}</code></div>`,
+      `<div>接收(Notify)：<code>${fmtUuid(notify.uuid)}</code></div>`,
+      `<div>发送(Write)：<code>${fmtUuid(write.uuid)}</code>` +
+        ` — ${writeWithoutResponse ? '无应答写' : '有应答写'}</div>`,
+    ];
+    $('info').innerHTML = lines.join('');
+    log(`自动识别到串口服务 ${fmtUuid(svc.uuid)}`, 'l-sys');
+    return true;
+  }
+  return false;
+}
+
+function onReceive(e) {
+  const buf = e.target.value.buffer;
+  rxBytes += buf.byteLength;
+  updateStats();
+  const text = $('rxHex').checked
+    ? toHex(buf)
+    : new TextDecoder().decode(buf);
+  log('← ' + text, 'l-rx');
+}
+
+async function send() {
+  const raw = $('txInput').value;
+  if (!raw) return;
+  try {
+    let bytes;
+    if ($('txMode').value === 'hex') {
+      bytes = hexToBytes(raw);
+    } else {
+      bytes = new TextEncoder().encode(raw + ($('txCRLF').checked ? '\r\n' : ''));
+    }
+
+    // BLE 单包有 MTU 限制，超长数据分片发送，20 字节是最保守的通用值。
+    const CHUNK = 20;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      const part = bytes.slice(i, i + CHUNK);
+      if (writeWithoutResponse) await txChar.writeValueWithoutResponse(part);
+      else await txChar.writeValueWithResponse(part);
+    }
+
+    txBytes += bytes.length;
+    updateStats();
+    log('→ ' + ($('txMode').value === 'hex' ? toHex(bytes.buffer) : raw), 'l-tx');
+  } catch (e) {
+    log('发送失败：' + e.message, 'l-err');
+  }
+}
+
+function onDisconnected() {
+  setStatus('已断开');
+  setConnected(false);
+  $('info').innerHTML = '';
+  rxChar = txChar = server = null;
+  log('设备已断开连接。');
+}
+
+$('btnScan').onclick = scan;
+$('btnDisc').onclick = () => device?.gatt.connected && device.gatt.disconnect();
+$('btnSend').onclick = send;
+$('btnClear').onclick = () => {
+  logEl.innerHTML = '';
+  txBytes = rxBytes = 0;
+  updateStats();
+};
+$('txInput').addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+
+setConnected(false);
+updateStats();
+log('就绪，点击「扫描并选择设备」开始。');
+</script>
+</body>
+</html>
