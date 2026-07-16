@@ -264,40 +264,39 @@ async function scan() {
       return;
     }
     log('正在打开设备选择器…');
-    device = await requestDeviceCompat();
+    // acceptAllDevices 让所有设备都能出现在列表里（模块广播里未必带 service UUID），
+    // optionalServices 则决定连上后我们有权限访问哪些 service。
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: KNOWN_SERVICES,
+    });
     device.addEventListener('gattserverdisconnected', onDisconnected);
     log(`已选择：${device.name || '(无名称)'} [${device.id}]`);
     await connect();
   } catch (e) {
-    if (e.name === 'NotFoundError') {
-      // 规范规定用户取消选择器也抛 NotFoundError，与「找不到设备」同名。
-      log('已取消选择，或选择器中没有可选设备。');
+    if (isCancellation(e)) {
+      log('已取消选择。');
       return;
     }
-    log(`扫描失败：${e.name} — ${e.message}`, 'l-err');
+    log('扫描失败：' + describeError(e), 'l-err');
     setStatus('错误', 'err');
   }
 }
 
-// acceptAllDevices 是标准写法，Chrome 下最省事：模块广播里未必带 service UUID，
-// 用 filters 反而会让设备从列表里消失。但 iOS 上的 Bluefy / WebBLE 是各自实现的，
-// 已知部分版本只认 filters，因此在其拒绝时回退一次，而不是直接把失败甩给用户。
-async function requestDeviceCompat() {
-  try {
-    return await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: KNOWN_SERVICES,
-    });
-  } catch (e) {
-    // 用户取消 / 无设备不该触发回退，原样抛出。
-    if (e.name === 'NotFoundError') throw e;
+// Chrome 用户取消时抛 NotFoundError。Bluefy 等第三方实现抛的不是标准 DOMException，
+// 没有 name 属性，据此判断会把「用户取消」误当成故障。
+function isCancellation(e) {
+  if (e?.name === 'NotFoundError') return true;
+  const text = (e?.message || String(e) || '').toLowerCase();
+  return /cancel|abort|dismiss|user denied|no device selected/.test(text);
+}
 
-    log(`选择器调用被拒绝（${e.name}），改用 filters 方式重试…`);
-    return await navigator.bluetooth.requestDevice({
-      filters: KNOWN_SERVICES.map(uuid => ({ services: [uuid] })),
-      optionalServices: KNOWN_SERVICES,
-    });
-  }
+// 非标准实现可能抛出字符串或无 name 的对象，别把 undefined 打给用户看。
+function describeError(e) {
+  if (!e) return '未知错误';
+  const name = e.name || e.code || '(无错误类型)';
+  const msg = e.message || String(e);
+  return `${name} — ${msg}`;
 }
 
 async function connect() {
@@ -322,7 +321,7 @@ async function connect() {
     setConnected(true);
     log('串口通道就绪，可以收发数据了。', 'l-sys');
   } catch (e) {
-    log('连接失败：' + e.message, 'l-err');
+    log('连接失败：' + describeError(e), 'l-err');
     setStatus('连接失败', 'err');
     setConnected(false);
   }
@@ -335,7 +334,7 @@ async function discoverSerialPair() {
   try {
     services = await server.getPrimaryServices();
   } catch (e) {
-    log('读取服务列表失败：' + e.message, 'l-err');
+    log('读取服务列表失败：' + describeError(e), 'l-err');
     return false;
   }
 
@@ -399,7 +398,7 @@ async function send() {
     updateStats();
     log('→ ' + ($('txMode').value === 'hex' ? toHex(bytes.buffer) : raw), 'l-tx');
   } catch (e) {
-    log('发送失败：' + e.message, 'l-err');
+    log('发送失败：' + describeError(e), 'l-err');
   }
 }
 
