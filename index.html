@@ -181,10 +181,55 @@ const fmtUuid = u => {
   return m ? '0x' + m[1].toUpperCase() : u;
 };
 
+// navigator.bluetooth 缺失有多种成因，逐一区分，避免一律报「不支持」。
+async function diagnose() {
+  const ua = navigator.userAgent;
+  const isChromium = !!window.chrome && /Chrome|Chromium|Edg/i.test(ua);
+  const isIOS = /iPad|iPhone|iPod/.test(ua) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  if (!window.isSecureContext) {
+    return { ok: false, reason:
+      `页面不在 secure context 下（当前 ${location.protocol}//${location.host}）。` +
+      'Web Bluetooth 仅在 HTTPS、localhost 或 file:// 下可用，请改用 HTTPS 域名访问。' };
+  }
+
+  if (!('bluetooth' in navigator)) {
+    if (isIOS) {
+      return { ok: false, reason:
+        'iOS / iPadOS 上所有浏览器都不支持 Web Bluetooth（含 iOS 版 Chrome，' +
+        '因其底层被强制使用 WebKit）。需改用 Bluefy 等专用 App。' };
+    }
+    if (!isChromium) {
+      return { ok: false, reason:
+        'Firefox 与 Safari 未实现 Web Bluetooth，且无计划支持。请改用 Chrome / Edge。' };
+    }
+    return { ok: false, reason:
+      '浏览器为 Chromium 内核但未暴露 navigator.bluetooth。常见于：Linux 下需在 ' +
+      'chrome://flags/#enable-web-bluetooth 开启；或部分二次开发的浏览器裁剪了该 API；' +
+      '或页面被嵌在未授予 bluetooth 权限的 iframe 中。' };
+  }
+
+  // API 存在不代表能用：还要看这台机器有没有可用的蓝牙适配器。
+  try {
+    if (navigator.bluetooth.getAvailability) {
+      const available = await navigator.bluetooth.getAvailability();
+      if (!available) {
+        return { ok: false, reason:
+          '浏览器支持 Web Bluetooth，但系统未检测到可用的蓝牙适配器。' +
+          '请确认设备有蓝牙硬件、驱动正常且蓝牙开关已打开。' };
+      }
+    }
+  } catch { /* getAvailability 不可用时不阻断，交给 requestDevice 报错 */ }
+
+  return { ok: true, reason: `环境正常（${isChromium ? 'Chromium 内核' : '未知内核'}，已在 secure context）` };
+}
+
 async function scan() {
   try {
-    if (!navigator.bluetooth) {
-      log('当前浏览器不支持 Web Bluetooth，请用 Chrome / Edge。', 'l-err');
+    const diag = await diagnose();
+    if (!diag.ok) {
+      log(diag.reason, 'l-err');
       return;
     }
     log('正在打开设备选择器…');
@@ -326,7 +371,19 @@ $('txInput').addEventListener('keydown', e => { if (e.key === 'Enter') send(); }
 
 setConnected(false);
 updateStats();
-log('就绪，点击「扫描并选择设备」开始。');
+
+// 打开页面即自检，不必等到点了扫描才发现环境不行。
+diagnose().then(d => {
+  if (d.ok) {
+    log('就绪，点击「扫描并选择设备」开始。');
+    log(d.reason);
+  } else {
+    log('环境自检未通过：', 'l-err');
+    log(d.reason, 'l-err');
+    $('btnScan').disabled = true;
+    setStatus('环境不支持', 'err');
+  }
+});
 </script>
 </body>
 </html>
