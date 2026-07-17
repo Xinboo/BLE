@@ -39,8 +39,17 @@ export class BluefyBleEngine {
     }
     char.addEventListener('characteristicvaluechanged', (e) => {
       const value = e.target.value;
-      // Bluefy 返回的可能不是标准 DataView
-      const buf = value instanceof DataView ? value.buffer : (value.buffer || value);
+      // Bluefy 的 DataView 可能是大 ArrayBuffer 上的一个切片，
+      // 直接取 .buffer 会从 offset 0 开始而不是实际数据位置。
+      // 必须用 byteOffset + byteLength 精确提取。
+      let buf;
+      if (value instanceof DataView) {
+        buf = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+      } else if (value instanceof ArrayBuffer) {
+        buf = value;
+      } else {
+        buf = value.buffer ? value.buffer.slice(0) : value;
+      }
       callback(buf);
     });
   }

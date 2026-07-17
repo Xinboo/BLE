@@ -26,7 +26,8 @@ export class ChromeBleEngine {
   async startNotify(char, callback) {
     await char.startNotifications();
     char.addEventListener('characteristicvaluechanged', (e) => {
-      callback(e.target.value.buffer);
+      const dv = e.target.value;
+      callback(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
     });
   }
 
