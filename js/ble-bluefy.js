@@ -28,19 +28,13 @@ var BluefyEngine = {
   },
 
   enableNotifications: function(char) {
-    return char.startNotifications().catch(function() {});
+    return char.startNotifications();
   },
 
-  write: function(char, bytes, withoutResponse) {
-    if (withoutResponse && typeof char.writeValueWithoutResponse === 'function') {
-      return char.writeValueWithoutResponse(bytes).catch(function() {
-        if (typeof char.writeValueWithResponse === 'function') return char.writeValueWithResponse(bytes);
-        if (typeof char.writeValue === 'function') return char.writeValue(bytes);
-        return Promise.reject(new Error('该特征不支持写入'));
-      });
-    }
-    if (typeof char.writeValueWithResponse === 'function') return char.writeValueWithResponse(bytes);
+  write: function(char, bytes) {
     if (typeof char.writeValue === 'function') return char.writeValue(bytes);
+    if (typeof char.writeValueWithoutResponse === 'function') return char.writeValueWithoutResponse(bytes);
+    if (typeof char.writeValueWithResponse === 'function') return char.writeValueWithResponse(bytes);
     return Promise.reject(new Error('该特征不支持写入'));
   },
 
