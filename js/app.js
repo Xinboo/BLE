@@ -139,10 +139,13 @@ function connect() {
 function discoverSerialPair(services) {
   rxChar = null;
   txChar = null;
+  var known = services.filter(function(svc) {
+    return KNOWN_SERVICES.indexOf(svc.uuid) !== -1;
+  });
   var i = 0;
   function tryNext() {
-    if (i >= services.length) return Promise.resolve(null);
-    var svc = services[i++];
+    if (i >= known.length) return Promise.resolve(null);
+    var svc = known[i++];
     return svc.getCharacteristics().then(function(chars) {
       var notify = null, write = null;
       for (var j = 0; j < chars.length; j++) {
